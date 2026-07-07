@@ -1,0 +1,23 @@
+# Dependensi Final Project Big Data & Predictive Analytics
+# Install: pip install -r requirements.txt
+
+# --- Scraping ---
+requests>=2.31
+
+# --- Analisis data & regresi ---
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+statsmodels>=0.14
+scikit-learn>=1.3
+
+# --- Visualisasi ---
+matplotlib>=3.7
+seaborn>=0.13
+plotly>=5.18
+
+# --- Dashboard ---
+streamlit>=1.32
+
+# (Opsional, jika menjalankan notebook secara lokal, bukan di Google Colab)
+# notebook
