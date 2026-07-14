@@ -24,22 +24,25 @@ st.set_page_config(
     layout="wide",
 )
 
-FITUR_KANDIDAT = ["log_popularitas", "log_favorit", "episodes", "durasi_menit",
-                  "tahun_sejak_2000", "jumlah_genre",
-                  "drop_rate", "completion_rate", "planning_ratio"]
+# Set prediktor final (hasil diagnostik data nyata):
+#  - rasio_favorit menggantikan log_favorit  -> menghapus multikolinearitas dgn popularitas
+#  - completion_rate TIDAK masuk model (r ≈ -0,90 dgn drop_rate), hanya deskriptif
+FITUR_KANDIDAT = ["log_popularitas", "rasio_favorit", "episodes", "durasi_menit",
+                  "tahun_sejak_2000", "jumlah_genre", "drop_rate", "planning_ratio"]
 
+# AniList tidak mengekspos status REPEATING (selalu 0) -> dikeluarkan dari funnel
 STATUS_KOLOM = {"Planning": "users_planning", "Current": "users_current",
                 "Completed": "users_completed", "Paused": "users_paused",
-                "Dropped": "users_dropped", "Repeating": "users_repeating"}
+                "Dropped": "users_dropped"}
 WARNA_STATUS = {"Planning": "#7CD421", "Current": "#02A9FF", "Completed": "#9256F3",
-                "Paused": "#F779A4", "Dropped": "#E85D75", "Repeating": "#26C6DA"}
+                "Paused": "#F779A4", "Dropped": "#E85D75"}
 BUCKET = list(range(10, 101, 10))
 SUARA_KOLOM = [f"suara_{b}" for b in BUCKET]
 
 LABEL_SUMBU = {
     "skor": "Skor rata-rata (0–100)",
     "log_popularitas": "log10(popularitas)",
-    "log_favorit": "log10(favorit + 1)",
+    "rasio_favorit": "Rasio favorit (favorit/popularitas)",
     "episodes": "Jumlah episode",
     "durasi_menit": "Durasi per episode (menit)",
     "tahun_rilis": "Tahun rilis",
@@ -129,7 +132,8 @@ if pilihan_genre:
 st.sidebar.markdown(f"**{len(d):,} / {len(df):,}** anime terpilih")
 st.sidebar.caption(
     "Sumber: web scraping **seluruh database** [AniList](https://anilist.co/search/anime) "
-    "via endpoint GraphQL publiknya (paginasi sort ID, rate limit dipatuhi)."
+    "via endpoint GraphQL publiknya (paginasi berlapis, rate limit dipatuhi). "
+    "Dataset dibatasi pada anime yang dinilai ≥ 30 pengguna agar skor reliabel."
 )
 
 # ====================== HEADER ======================
@@ -162,7 +166,7 @@ with tab1:
 
     st.subheader("Statistik deskriptif")
     st.dataframe(
-        d[["skor", "popularitas", "favorit", "episodes", "durasi_menit",
+        d[["skor", "popularitas", "favorit", "rasio_favorit", "episodes", "durasi_menit",
            "tahun_rilis", "jumlah_genre", "drop_rate", "completion_rate",
            "planning_ratio"]].describe().round(3),
         use_container_width=True)
@@ -198,7 +202,7 @@ with tab2:
 
     c3, c4 = st.columns(2)
 
-    kolom_kor = ["skor", "log_popularitas", "log_favorit", "episodes", "durasi_menit",
+    kolom_kor = ["skor", "log_popularitas", "rasio_favorit", "episodes", "durasi_menit",
                  "tahun_rilis", "jumlah_genre", "drop_rate", "completion_rate",
                  "planning_ratio"]
     fig_heat = px.imshow(
@@ -304,9 +308,11 @@ with tab4:
 
     st.subheader("Model regresi linier berganda (pasca-seleksi VIF)")
     st.caption(
-        "Dilatih pada seluruh dataset bersih (tak terpengaruh filter). Variabel dengan "
-        "VIF > 10 dibuang otomatis — metodologi identik dengan notebook analisis. "
-        "Kolom distribusi suara TIDAK dipakai sebagai prediktor (anti-kebocoran data).")
+        "Dilatih pada seluruh dataset bersih (tak terpengaruh filter), metodologi identik "
+        "dengan notebook analisis: `rasio_favorit` menggantikan `log_favorit` (menghapus "
+        "multikolinearitas dengan popularitas), `completion_rate` dikeluarkan karena "
+        "redundan dengan `drop_rate` (r ≈ −0,90), dan kolom distribusi suara TIDAK dipakai "
+        "sebagai prediktor (anti-kebocoran data). Pengecekan VIF > 10 tetap aktif.")
     st.code(format_persamaan(model.params), language="text")
     st.caption("Variabel terpakai: " + ", ".join(fitur))
 
@@ -333,24 +339,25 @@ with tab4:
     in_thn = i5.number_input("Tahun rilis", min_value=1960, max_value=2026, value=2024)
     in_gen = i6.slider("Jumlah genre", 1, 8, int(df["jumlah_genre"].median()))
 
-    i7, i8, i9 = st.columns(3)
-    in_drop = i7.slider("Drop rate (%)", 0, 100,
+    i7, i8 = st.columns(2)
+    in_drop = i7.slider("Drop rate (%) — penonton yang berhenti", 0, 100,
                         int(df["drop_rate"].median() * 100)) / 100
-    in_comp = i8.slider("Completion rate (%)", 0, 100,
-                        int(df["completion_rate"].median() * 100)) / 100
-    in_plan = i9.slider("Planning ratio (%)", 0, 100,
+    in_plan = i8.slider("Planning ratio (%) — niat yang belum terkonversi", 0, 100,
                         int(df["planning_ratio"].median() * 100)) / 100
+    st.caption(
+        f"Rasio favorit dihitung otomatis dari dua input di atas "
+        f"(favorit ÷ popularitas). Nilai median dataset: "
+        f"{df['rasio_favorit'].median()*100:.2f}%.")
 
     if st.button("Hitung prediksi skor", type="primary"):
         semua_input = {
             "log_popularitas": np.log10(in_pop),
-            "log_favorit": np.log10(in_fav + 1),
+            "rasio_favorit": min(in_fav / max(in_pop, 1), 1.0),
             "episodes": in_eps,
             "durasi_menit": in_dur,
             "tahun_sejak_2000": in_thn - 2000,
             "jumlah_genre": in_gen,
             "drop_rate": in_drop,
-            "completion_rate": in_comp,
             "planning_ratio": in_plan,
         }
         baris_in = pd.DataFrame([semua_input])[fitur].astype(float)
@@ -367,5 +374,5 @@ st.divider()
 st.caption(
     "© 2026 Kelompok «ISI» — Final Project Big Data & Predictive Analytics. "
     "Seluruh database anime AniList dikumpulkan mandiri via web scraping endpoint "
-    "GraphQL publik (paginasi sort ID; rate limit & proteksi Cloudflare ditangani etis)."
+    "GraphQL publik (paginasi berlapis; rate limit & proteksi Cloudflare ditangani etis)."
 )
