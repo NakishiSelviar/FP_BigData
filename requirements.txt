@@ -3,6 +3,7 @@
 
 # --- Scraping ---
 requests>=2.31
+cloudscraper>=1.2.71
 
 # --- Analisis data & regresi ---
 pandas>=2.0
