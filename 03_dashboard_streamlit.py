@@ -9,6 +9,8 @@ Deploy publik  : lihat 00_LANGKAH_PENGERJAAN.md (Streamlit Community Cloud)
 Syarat: `anime_clean.csv` (hasil notebook 02) berada di folder yang sama.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -54,9 +56,93 @@ LABEL_SUMBU = {
 }
 
 
+BERKAS_DATA = "anime_clean.csv"
+MIN_SUARA = 30           # ambang keandalan skor (identik dgn notebook analisis)
+N_HARAPAN = 10_000       # dataset penuh ±16 ribu baris; di bawah ini = indikasi CSV usang
+
+
+def sidik_berkas(path: str) -> tuple:
+    """Sidik jari berkas — dipakai sebagai kunci cache agar CSV baru tidak memakai
+    hasil cache CSV lama."""
+    s = os.stat(path)
+    return (path, s.st_size, int(s.st_mtime))
+
+
+def lengkapi_kolom(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Menghitung ulang kolom turunan yang hilang dari kolom mentah, sehingga dashboard
+    tetap jalan meski diberi anime_clean.csv versi lama. Mengembalikan (df, daftar kolom
+    yang dipulihkan)."""
+    dipulihkan: list[str] = []
+
+    def tambah(nama: str, nilai) -> None:
+        df[nama] = nilai
+        dipulihkan.append(nama)
+
+    if "skor" not in df.columns and {"skor_rata2", "skor_mean"} <= set(df.columns):
+        tambah("skor", df["skor_rata2"].fillna(df["skor_mean"]))
+
+    if "popularitas" in df.columns:
+        pop = df["popularitas"].replace(0, np.nan)
+        if "log_popularitas" not in df.columns:
+            tambah("log_popularitas", np.log10(pop))
+        if "rasio_favorit" not in df.columns and "favorit" in df.columns:
+            tambah("rasio_favorit", (df["favorit"] / pop).clip(0, 1))
+        if "planning_ratio" not in df.columns and "users_planning" in df.columns:
+            tambah("planning_ratio", (df["users_planning"] / pop).clip(0, 1))
+
+    kol_status = ["users_current", "users_completed", "users_dropped",
+                  "users_paused", "users_repeating"]
+    if set(kol_status) <= set(df.columns):
+        aktif = df[kol_status].fillna(0).sum(axis=1)
+        if "penonton_aktif" not in df.columns:
+            tambah("penonton_aktif", aktif)
+        if "completion_rate" not in df.columns:
+            tambah("completion_rate",
+                   np.where(aktif > 0, df["users_completed"] / aktif, np.nan))
+        if "drop_rate" not in df.columns:
+            akhir = df["users_completed"] + df["users_dropped"]
+            tambah("drop_rate",
+                   np.where(akhir > 0, df["users_dropped"] / akhir, np.nan))
+
+    if "total_suara" not in df.columns and set(SUARA_KOLOM) <= set(df.columns):
+        tambah("total_suara", df[SUARA_KOLOM].fillna(0).sum(axis=1))
+
+    if "tahun_rilis" in df.columns:
+        if "tahun_sejak_2000" not in df.columns:
+            tambah("tahun_sejak_2000", df["tahun_rilis"] - 2000)
+        if "era" not in df.columns:
+            tambah("era", np.where(df["tahun_rilis"] >= 2015,
+                                   "2015–sekarang", "Sebelum 2015"))
+    return df, dipulihkan
+
+
 @st.cache_data
-def muat_data() -> pd.DataFrame:
-    return pd.read_csv("anime_clean.csv")
+def muat_data(_sidik: tuple) -> tuple[pd.DataFrame, list[str]]:
+    df = pd.read_csv(BERKAS_DATA)
+    df, dipulihkan = lengkapi_kolom(df)
+    return df, dipulihkan
+
+
+def periksa_kesegaran(df: pd.DataFrame, dipulihkan: list[str]) -> list[str]:
+    """Mendeteksi anime_clean.csv yang usang/terpotong dan menjelaskan gejalanya."""
+    masalah: list[str] = []
+    if len(df) < N_HARAPAN:
+        masalah.append(
+            f"Hanya **{len(df):,} baris** — dataset lengkap seharusnya belasan ribu baris. "
+            "Ini gejala khas CSV dari scraping lama yang terpotong di batas 5.000 entri.")
+    if "tahun_rilis" in df.columns and int(df["tahun_rilis"].max()) < 2024:
+        masalah.append(
+            f"Tahun rilis maksimum hanya **{int(df['tahun_rilis'].max())}** — anime terbaru "
+            "belum ada, tanda dataset lama (hanya mencakup ID kecil / judul lawas).")
+    if "total_suara" in df.columns and (df["total_suara"] < MIN_SUARA).mean() > 0.02:
+        masalah.append(
+            f"Sebagian anime memiliki < {MIN_SUARA} suara penilai — ambang keandalan skor "
+            "belum diterapkan (CSV dihasilkan notebook versi lama).")
+    if dipulihkan:
+        masalah.append(
+            "Kolom turunan berikut tidak ada di CSV dan dihitung ulang sementara oleh "
+            f"dashboard: `{'`, `'.join(dipulihkan)}`.")
+    return masalah
 
 
 def saring_vif(data: pd.DataFrame, fitur: list[str]) -> list[str]:
@@ -73,9 +159,9 @@ def saring_vif(data: pd.DataFrame, fitur: list[str]) -> list[str]:
 
 
 @st.cache_resource
-def latih_model():
+def latih_model(_sidik: tuple):
     """Regresi berganda pada seluruh data bersih (pasca-seleksi VIF) + kinerja uji."""
-    df = muat_data()
+    df, _ = muat_data(_sidik)
     fitur = saring_vif(df, [c for c in FITUR_KANDIDAT if c in df.columns])
 
     X = sm.add_constant(df[fitur].astype(float))
@@ -100,7 +186,17 @@ def format_persamaan(params: pd.Series) -> str:
     return teks
 
 
-df = muat_data()
+# ====================== MUAT DATA + PEMERIKSAAN KESEGARAN ======================
+if not os.path.exists(BERKAS_DATA):
+    st.error(
+        f"Berkas **{BERKAS_DATA}** tidak ditemukan. Letakkan dataset bersih hasil notebook "
+        "`02_analisis_regresi.ipynb` di folder yang sama dengan skrip ini "
+        "(atau di root repository bila di-deploy ke Streamlit Cloud).")
+    st.stop()
+
+SIDIK = sidik_berkas(BERKAS_DATA)
+df, kolom_dipulihkan = muat_data(SIDIK)
+masalah_data = periksa_kesegaran(df, kolom_dipulihkan)
 
 # ====================== SIDEBAR: FILTER ======================
 st.sidebar.title("🔎 Filter Data")
@@ -131,6 +227,10 @@ if pilihan_genre:
 
 st.sidebar.markdown(f"**{len(d):,} / {len(df):,}** anime terpilih")
 st.sidebar.caption(
+    f"Dataset: {len(df):,} baris · tahun {int(df['tahun_rilis'].min())}–"
+    f"{int(df['tahun_rilis'].max())}"
+    + ("  ⚠️ tampak usang" if masalah_data else "  ✅"))
+st.sidebar.caption(
     "Sumber: web scraping **seluruh database** [AniList](https://anilist.co/search/anime) "
     "via endpoint GraphQL publiknya (paginasi berlapis, rate limit dipatuhi). "
     "Dataset dibatasi pada anime yang dinilai ≥ 30 pengguna agar skor reliabel."
@@ -142,6 +242,18 @@ st.caption(
     "Final Project **Big Data & Predictive Analytics** · Kelompok «ISI» · "
     "Seluruh database AniList · Regresi linier + metrik perilaku penonton"
 )
+
+if masalah_data:
+    with st.expander("⚠️ Dataset yang dimuat tampak USANG — klik untuk melihat & memperbaiki",
+                     expanded=True):
+        for m in masalah_data:
+            st.markdown(f"- {m}")
+        st.markdown(
+            f"**Cara memperbaiki:** ganti `{BERKAS_DATA}` dengan hasil terbaru "
+            "`02_analisis_regresi.ipynb` (dataset penuh). Bila di-deploy ke Streamlit Cloud: "
+            "unggah ulang CSV tersebut ke repository GitHub, lalu buka menu ⋮ → **Reboot app** "
+            "agar cache lama dibuang. Dashboard tetap berjalan dengan data yang ada, tetapi "
+            "angkanya tidak mewakili keseluruhan database.")
 
 if d.empty:
     st.warning("Tidak ada data yang cocok dengan filter. Longgarkan filter di sidebar.")
@@ -304,7 +416,7 @@ with tab3:
 
 # ====================== TAB 4: MODEL & PREDIKSI ======================
 with tab4:
-    model, fitur, rmse_uji, r2_uji = latih_model()
+    model, fitur, rmse_uji, r2_uji = latih_model(SIDIK)
 
     st.subheader("Model regresi linier berganda (pasca-seleksi VIF)")
     st.caption(
