@@ -312,19 +312,15 @@ st.sidebar.markdown(f"**{len(d):,} / {len(df):,}** anime terpilih")
 st.sidebar.caption(
     f"Dataset: {len(df):,} baris · tahun {int(df['tahun_rilis'].min())}–"
     f"{int(df['tahun_rilis'].max())}"
-    + ("  ⚠️ tampak usang" if masalah_data else "  ✅"))
+    + ("  ⚠️ tampak usang" if masalah_data else ""))
 st.sidebar.caption(
     "Sumber: web scraping **seluruh database** [AniList](https://anilist.co/search/anime) "
-    "via endpoint GraphQL publiknya (paginasi berlapis, rate limit dipatuhi). "
+    "via endpoint GraphQL"
     "Dataset dibatasi pada anime yang dinilai ≥ 30 pengguna agar skor reliabel."
 )
 
 # ====================== HEADER ======================
 st.title("🎬 Dashboard Riset Pasar & Prediksi Skor Anime")
-st.caption(
-    "Final Project **Big Data & Predictive Analytics** · Kelompok «ISI» · "
-    "Seluruh database AniList · Regresi linier + metrik perilaku penonton"
-)
 
 if masalah_data:
     with st.expander("⚠️ Dataset yang dimuat tampak USANG — klik untuk melihat & memperbaiki",
@@ -502,16 +498,7 @@ with tab4:
     (model, fitur_final, fitur_dibuang, r2_uji, rmse_uji, mae_uji,
      vif_maks, TOP_GENRE, LEVEL) = latih_model(SIDIK)
 
-    st.subheader("Model regresi linier berganda final — replikasi notebook 02")
-    st.caption(
-        "Dilatih ulang dari CSV dengan kontrak yang identik dengan notebook analisis "
-        "(§11): spesifikasi terbaik hasil eksperimen bertahap M0–M5 (transformasi log "
-        "episode; dummy format, sumber adaptasi, negara asal; 10 flag genre), lalu "
-        "dipangkas mundur berbasis p-value HC3 **pada data latih saja** hingga seluruh "
-        "koefisien signifikan — data uji tetap steril. Anti-kebocoran dijaga: kolom "
-        "distribusi suara, `total_suara`, `trending`, dan turunan skor tidak pernah "
-        "menjadi prediktor; `rasio_favorit` menggantikan `log_favorit` (r ≈ 0,96 dengan "
-        "popularitas); `completion_rate` hanya deskriptif (r ≈ −0,90 dengan `drop_rate`).")
+    st.subheader("Model regresi linier berganda")
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("R² (data uji)", f"{r2_uji:.4f}")
@@ -520,15 +507,8 @@ with tab4:
     m4.metric("Prediktor", f"{len(fitur_final)}")
     m5.metric("Jumlah data", f"{len(df):,}")
 
-    with st.expander("📋 Tabel koefisien model final (robust SE HC3) — semua signifikan"):
+    with st.expander("📋 Tabel koefisien model final (robust SE HC3)"):
         st.dataframe(tabel_koefisien(model), use_container_width=True, height=420)
-        st.caption(
-            f"VIF maksimum {vif_maks:.2f} (ambang 10 — aman). Suku yang dipangkas karena "
-            "tidak signifikan di data latih: "
-            + ", ".join(f"`{nama}`" for nama, _ in fitur_dibuang)
-            + ". Kategori yang dipangkas berbagi efek dengan kategori basisnya "
-            "(TV / ORIGINAL / JP); genre yang dipangkas tetap terwakili lewat "
-            "`jumlah_genre`.")
 
     st.divider()
     st.subheader("🔮 Coba prediksi skor anime")
@@ -564,10 +544,6 @@ with tab4:
                          int(df["drop_rate"].median() * 100)) / 100
     in_plan = i11.slider("Planning ratio (%) — niat yang belum terkonversi", 0, 100,
                          int(df["planning_ratio"].median() * 100)) / 100
-    st.caption(
-        f"`rasio_favorit` dihitung otomatis (favorit ÷ popularitas; median dataset "
-        f"{df['rasio_favorit'].median()*100:.2f}%), `log_episodes` = log10(episode + 1), "
-        f"dan `jumlah_genre` = banyaknya genre terpilih ({len(in_genre)}).")
 
     if st.button("Hitung prediksi skor", type="primary"):
         nilai_numerik = {
@@ -592,7 +568,5 @@ with tab4:
 
 st.divider()
 st.caption(
-    "© 2026 Kelompok «ISI» — Final Project Big Data & Predictive Analytics. "
-    "Seluruh database anime AniList dikumpulkan mandiri via web scraping endpoint "
-    "GraphQL publik (paginasi berlapis; rate limit & proteksi Cloudflare ditangani etis)."
+    "Final Project Big Data & Predictive Analytics."
 )
